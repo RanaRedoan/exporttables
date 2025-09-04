@@ -1,0 +1,3 @@
+v 3
+d exporttables
+p exporttables        Export all tables of the dataset

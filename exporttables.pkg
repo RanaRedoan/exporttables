@@ -1,0 +1,6 @@
+v 3
+d exporttables: Export all tables of the Dataset
+d distribution-date: 2025-09-03
+f src/exporttables.ado
+f src/exporttables.sthlp
+f examples/example.do
