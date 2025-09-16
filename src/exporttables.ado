@@ -1,11 +1,10 @@
-*! version 1.2.1
+
+
+*! version 1.2.6
 *! exportables.ado
 *! Author: Md. Redoan Hossain Bhuiyan
 *! Email: redoanhossain630@gmail.com
-*! Description: Export single-select and multi-select survey tables to Excel
-*!              with totals and percentages (rounded to two decimals)
-*!              Automatically handles split variables for multi-select questions.
-*!              Optional variable selection added: by default exports all, or only selected.
+
 
 capture program drop exporttables
 program define exporttables
@@ -14,13 +13,13 @@ program define exporttables
 
     * --- PRESERVE ORIGINAL DATA ---
     preserve
-    
+
     * --- DETERMINE VARIABLES TO PROCESS ---
     if "`varlist'" == "" {
         ds
         local varlist `r(varlist)'
     }
-    
+
     * --- TEMPORARILY ENCODE STRING VARIABLES ---
     local encoded_vars
     foreach var of local varlist {
@@ -29,38 +28,18 @@ program define exporttables
             * Create temporary encoded version
             tempvar temp_encoded
             encode `var', generate(`temp_encoded')
-            
+
             * Copy value labels to original variable name for consistency
             local templabel : value label `temp_encoded'
             if "`templabel'" != "" {
                 label copy `templabel' `var'
                 label values `temp_encoded' `var'
             }
-            
+
             * Replace original string variable with encoded numeric
             drop `var'
             rename `temp_encoded' `var'
             local encoded_vars `encoded_vars' `var'
-        }
-    }
-
-    * --- ALIGN VALUE LABELS WITH VARIABLE NAMES ---
-    foreach var of local varlist {
-        capture confirm variable `var'
-        if _rc continue
-        
-        * For numeric variables without value labels, create basic labels
-        capture confirm numeric variable `var'
-        if !_rc {
-            local vlabel : value label `var'
-            if "`vlabel'" == "" {
-                * Create basic value labels for numeric variables without them
-                quietly levelsof `var', local(levels)
-                foreach val in `levels' {
-                    label define `var' `val' "`val'", add
-                }
-                label values `var' `var'
-            }
         }
     }
 
@@ -86,6 +65,10 @@ program define exporttables
 
         * --- MULTI-SELECT VARIABLE ---
         if "`children'" != "" {
+            * Skip if this is a child variable itself
+            if regexm("`v'", ".*_[0-9]+$") | regexm("`v'", ".*_oth$") | regexm("`v'", ".*_rank.*$") {
+                continue
+            }
 
             local vlabel : variable label `v'
             if "`vlabel'" == "" local vlabel = "`v'"
@@ -105,7 +88,7 @@ program define exporttables
             }
             quietly count if __tmp_case==1
             local total_cases = r(N)
-            
+
             drop __tmp_case
 
             * total responses = sum across numeric dummies
@@ -138,14 +121,13 @@ program define exporttables
             putexcel C`row' = 100, bold border(all)
             putexcel D`row' = "", bold border(all)
             local ++row
-            
+
             * Add valid cases information only for multi-select variables
             putexcel A`row' = "Valid cases:", bold
             putexcel B`row' = `total_cases', bold
             local ++row
             local ++row
             local ++tablecount
-
         }
         * --- SINGLE-SELECT VARIABLE ---
         else {
@@ -153,61 +135,56 @@ program define exporttables
             if regexm("`v'", ".*_[0-9]+$") | regexm("`v'", ".*_oth$") | regexm("`v'", ".*_rank.*$") {
                 continue
             }
-            
-            local valuelabel : value label `v'
-            * Process all variables, even those without value labels
-            if "`valuelabel'" != "" | "`:type `v''" != "string" {
 
-                local vlabel : variable label `v'
-                if "`vlabel'" == "" local vlabel = "`v'"
+            local vlabel : variable label `v'
+            if "`vlabel'" == "" local vlabel = "`v'"
 
-                putexcel A`row' = "Variable: `v' (`vlabel')", bold
-                local ++row
-                putexcel A`row' = "Option", bold border(all)
-                putexcel B`row' = "Frequency", bold border(all)
-                putexcel C`row' = "Percent", bold border(all)
-                local ++row
+            putexcel A`row' = "Variable: `v' (`vlabel')", bold
+            local ++row
+            putexcel A`row' = "Option", bold border(all)
+            putexcel B`row' = "Frequency", bold border(all)
+            putexcel C`row' = "Percent", bold border(all)
+            local ++row
 
-                * Get unique values
-                if "`valuelabel'" != "" {
-                    levelsof `v', local(options)
-                }
-                else {
-                    * For variables without value labels, get unique numeric values
-                    quietly tab `v', matrow(values)
-                    local options
-                    forvalues i = 1/`=r(r)' {
-                        local options `options' `=values[`i',1]'
-                    }
-                }
-                
-                local total = 0
-                foreach opt of local options {
-                    quietly count if `v'==`opt'
-                    local freq = r(N)
-                    local total = `total' + `freq'
+            * Get unique values and count non-missing cases for the denominator
+            quietly tab `v', matrow(values)
+            local total_valid = `r(N)'
+            local options
+            forvalues i = 1/`=r(r)' {
+                local options `options' `=values[`i',1]'
+            }
+
+            local total_reported = 0
+            foreach opt of local options {
+                quietly count if `v' == `opt'
+                local freq = r(N)
+                * Only include options with a frequency greater than zero
+                if `freq' > 0 {
+                    local total_reported = `total_reported' + `freq'
 
                     local txt = "`opt'"
+                    local valuelabel : value label `v'
+                    * If a value label exists, use it. Otherwise, use the numeric value directly.
                     if "`valuelabel'" != "" {
                         local lbl : label (`valuelabel') `opt'
                         if "`lbl'" != "" local txt = "`lbl'"
                     }
 
-                    local pct = cond(`total'>0, 100*`freq'/`=_N', .)
+                    local pct = cond(`total_valid'>0, 100*`freq'/`total_valid', .)
                     putexcel A`row' = "`txt'", border(all)
                     putexcel B`row' = `freq', border(all)
                     putexcel C`row' = `=round(`pct',0.01)', border(all)
                     local ++row
                 }
-
-                * Total row for single-select
-                putexcel A`row' = "Total", bold border(all)
-                putexcel B`row' = `total', bold border(all)
-                putexcel C`row' = 100, bold border(all)
-                local ++row
-                local ++row
-                local ++tablecount
             }
+
+            * Total row for single-select
+            putexcel A`row' = "Total", bold border(all)
+            putexcel B`row' = `total_reported', bold border(all)
+            putexcel C`row' = 100, bold border(all)
+            local ++row
+            local ++row
+            local ++tablecount
         }
     }
 
@@ -216,11 +193,11 @@ program define exporttables
 
     * --- Final Message ---
     di as txt "{hline 65}"
-    di as txt "                 " as result "✔ EXPORT COMPLETED SUCCESSFULLY ✔"
+    di as txt "                     " as result "✔ EXPORT COMPLETED SUCCESSFULLY ✔"
     di as txt "{hline 65}"
     di as txt "   Number of tables created : " as result `tablecount'
     di as txt "   File saved as            : " as result "`using'"
     di as txt "{hline 65}"
-    di as txt "        Thank you for using " as result "exportables" as txt "!"
+    di as txt "     Thank you for using " as result "exporttables" as txt "!"
     di as txt "{hline 65}"
 end
