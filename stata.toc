@@ -1,3 +1,3 @@
 v 3
-d exporttables
-p exporttables        Export all tables of the dataset
+d exporttables: every table of a survey dataset to Excel, one-way or by district
+p exporttables Export single-choice, multiple-choice and continuous tables to Excel
