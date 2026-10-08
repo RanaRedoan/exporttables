@@ -1,6 +1,19 @@
 v 3
-d exporttables: Export all tables of the Dataset
-d distribution-date: 2025-09-03
+d exporttables: export a table for every variable of a survey dataset to Excel
+d
+d Single choice -> N and %; multiple choice (select_multiple) -> N and % of
+d cases with valid cases (N); continuous -> N, mean, median, mode, SD, min,
+d max; string variables are counted but not tabulated.  With by(), every
+d table is crossed by a category such as district, plus Total.  Writes a
+d formatted workbook with an Index sheet.  Pure Stata, no Python.
+d
+d Requires: Stata 16 or newer
+d
+d Distribution-Date: 20261008
+d
+d Author: Md. Redoan Hossain Bhuiyan
+d Support: https://github.com/RanaRedoan/exporttables/issues
+d
 f src/exporttables.ado
 f src/exporttables.sthlp
 f examples/example.do
