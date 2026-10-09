@@ -14,14 +14,22 @@ writes the right table for it:
 | Single choice (value-labelled, or 0/1) | N and % of valid answers, Total row |
 | Multiple choice (SurveyCTO / ODK / Kobo `select_multiple`) | N and % of cases per option, **Valid cases (N)** row, `*` footnote |
 | Continuous (other numeric) | N, Mean, Median, Mode, SD, Min, Max |
-| String, date, identifier, form metadata, GPS, phone number, all missing | no table, listed on the Index sheet with the reason |
+| Text with at most 50 different answers (categories typed into Excel) | N and % of valid answers, like single choice |
+| Numbers stored as text (age, income from Excel) | treated as numbers: continuous, or single choice if 10 values or fewer |
+| Free text (more than 50 different answers), date, identifier, form metadata, GPS, phone number, all missing | no table, listed on the Index sheet with the reason |
+
+> [!TIP]
+> **Data from Excel works too.** After `import excel`, categories such as
+> `"Male"` or `"Lack of money"` are text. `exporttables` tables every text
+> column with 50 or fewer different answers, and leaves out comment-style
+> columns with more. Change the limit with `strmax(#)`.
 
 With `by()`, every table becomes a cross table: answer choices down the rows,
 one N / % column pair per district (or any other category), plus Total.
 
 The workbook has two sheets:
 
-- **Index**: dataset, date, counts of tables by type, how many string variables
+- **Index**: dataset, date, counts of tables by type, how many text variables
   were left out, and a row per variable with a link to its table.
 - **Tables**: all tables, one under another, with a navy header row, a pale blue
   Total row, a light grid, `#,##0` counts and `0.0` percentages. Every column is
@@ -57,6 +65,10 @@ exporttables gender age crops income using "selected.xlsx", by(district) replace
 
 * a subgroup, whole-number percentages, every labelled category shown
 exporttables using "female.xlsx" if gender == 2, by(district) decimals(0) allcats replace
+
+* data kept in Excel: text columns with up to 50 answers become tables
+import excel using "survey.xlsx", firstrow clear
+exporttables using "tables.xlsx", by(district) replace
 ```
 
 | Option | Effect |
@@ -69,6 +81,7 @@ exporttables using "female.xlsx" if gender == 2, by(district) decimals(0) allcat
 | `categorical(varlist)` | force these variables to be single choice |
 | `continuous(varlist)` | force these variables to be continuous |
 | `nomultiselect` | switch off multiple-choice detection |
+| `strmax(#)` | text variables with at most # different answers get a table (default 50; `strmax(0)` for none) |
 
 While it runs, each variable gets a line in the Results window:
 
@@ -77,11 +90,13 @@ While it runs, each variable gets a line in the Results window:
   [2/8]      age                           continuous       done
   [3/8]      income                        continuous       done
   [4/8]      crops (5 options)             multiple choice  done
-             name                          string           skipped
+  [5/8]      barrier                       single (text)    done
+             comment                       text             skipped
              interview_date                date             skipped
   ...
-  Tables exported      : 8  (single 3, multiple 2, continuous 3)
-  String variables     : 3  (no table exported)
+  Tables exported      : 8  (single 4, multiple 2, continuous 2)
+  From text variables  : 1  (categories, or numbers stored as text)
+  Text variables       : 3  (no table: more than 50 different answers, or every answer different)
 ```
 
 If one table fails, it is marked `FAILED` and the export carries on.
@@ -132,7 +147,12 @@ question). Percentages are of valid cases and can add up to more than 100%.
   codes such as `-99 "Don't know"` does not make it categorical: those codes
   are left out of the statistics and reported under the table. Mode is left
   blank when no value occurs more than once.
-- **No table**: strings; dates (`%t` / `%d` formats); identifiers (names ending
+- **Text**: at most 50 different answers (`strmax()`) makes a single-choice
+  table, answers in natural order (`Type 2` before `Type 10`). Text whose every
+  answer is a number is treated as a number. Free text with more answers,
+  text in which every answer is different, dates written as text and
+  `KEY` / `SubmissionDate`-style metadata get no table.
+- **No table**: free text; dates (`%t` / `%d` formats, or text); identifiers (names ending
   in `id` such as `UID`, `hhid`, `resp_id`, or `key`, `uuid`, `serial`, with a
   unique value per row); form metadata (`formdef_version`, `deviceid` …); GPS
   parts (`…latitude`, `…longitude`, `…altitude`, `…accuracy`); phone numbers

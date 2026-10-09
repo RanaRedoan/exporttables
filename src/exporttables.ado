@@ -1,4 +1,4 @@
-*! version 2.1.0  10oct2026
+*! version 2.2.0  10oct2026
 *! exporttables: export a frequency / summary table for every variable
 *!               of a dataset to one formatted Excel sheet
 *! Author: Md. Redoan Hossain Bhuiyan
@@ -6,13 +6,15 @@
 *
 * What it builds, one table per question:
 *
-*   single choice    (value-labelled or 0/1 numeric)  -> N and % of valid
+*   single choice    (value-labelled or 0/1 numeric,  -> N and % of valid
+*                     or text with at most strmax()
+*                     different answers)
 *   multiple choice  (select_multiple option dummies) -> N and % of cases,
 *                                                        valid cases (N) row
 *                                                        and a * footnote
-*   continuous       (any other numeric)              -> N, Mean, Median,
-*                                                        Mode, SD, Min, Max
-*   string, date, all-missing                         -> no table, listed on
+*   continuous       (any other numeric, or numbers   -> N, Mean, Median,
+*                     stored as text)                    Mode, SD, Min, Max
+*   free text, date, ID, metadata, all-missing        -> no table, listed on
 *                                                        the Index sheet
 *
 * With by(), every table becomes a cross table: one column block per
@@ -31,7 +33,7 @@ program define exporttables, rclass
     syntax [varlist(default=none)] [if] [in] using/ [,   ///
         BY(varname) SHEET(string) REPLACE ALLcats          ///
         DECimals(integer 1) CATegorical(varlist)           ///
-        CONTinuous(varlist) noMULTiselect ]
+        CONTinuous(varlist) noMULTiselect STRmax(integer 50) ]
 
     *------------------------------------------------------------------
     * 0. CHECK THE REQUEST
@@ -51,6 +53,10 @@ program define exporttables, rclass
     }
     if `decimals' < 0 | `decimals' > 4 {
         di as error "decimals() must be between 0 and 4"
+        exit 198
+    }
+    if `strmax' < 0 {
+        di as error "strmax() must be 0 or more"
         exit 198
     }
 
@@ -385,8 +391,75 @@ program define exporttables, rclass
         local vl    : value label `v'
 
         if substr("`vtype'", 1, 3) == "str" {
-            local e`ne'_kind "string"
-            continue
+            * Text answers.  Data typed into Excel keeps its categories as
+            * text ("Male", "Lack of money" ...), so a text variable with at
+            * most strmax() different answers gets a table like any single
+            * choice.  Free text, names, IDs, dates written as text and form
+            * metadata do not; categorical() forces a table.
+            mata: _et_strinfo("`v'")
+            local forced = strpos(" `categorical' ", " `v' ") > 0
+            if `nnm' == 0 {
+                local e`ne'_kind "empty"
+                continue
+            }
+            local asnumber = 0
+            if !`forced' {
+                * (inlist() takes at most 10 text arguments)
+                local lv = lower("`v'")
+                if inlist("`lv'", "key", "instanceid", "instancename", ///
+                          "submissiondate", "starttime", "endtime") | ///
+                   inlist("`lv'", "deviceid", "subscriberid", "simid", ///
+                          "devicephonenum", "username", "caseid") | ///
+                   inlist("`lv'", "formdef_version", "audit", "text_audit", ///
+                          "today", "phonenumber") {
+                    local e`ne'_kind "meta"
+                    continue
+                }
+                if `ndate' {
+                    local e`ne'_kind "date"
+                    continue
+                }
+                * Numbers stored as text (Excel often does this): with more
+                * than 10 different values it is a measurement such as age
+                * or income, converted and handled below like any number;
+                * a few values (a 1 to 5 rating) are categories.
+                if `nall' & `nun' > 10 {
+                    tempvar num
+                    local vlab : variable label `v'
+                    qui gen double `num' = real(`v')
+                    drop `v'
+                    rename `num' `v'
+                    label variable `v' `"`vlab'"'
+                    local asnumber = 1
+                }
+                else if `nun' > `strmax' {
+                    local e`ne'_kind "string"
+                    local e`ne'_why "No table: text with `nun' different answers (more than `strmax')"
+                    continue
+                }
+                else if `nun' == `nnm' & `nnm' >= 10 {
+                    local e`ne'_kind "string"
+                    local e`ne'_why "No table: text, every answer different"
+                    continue
+                }
+            }
+            local e`ne'_text "1"
+            if !`asnumber' {
+                * recode the text into a labelled number under the same
+                * name (preserve brings the text back at the end) and
+                * tabulate that like any single choice
+                tempvar enc
+                local vlab : variable label `v'
+                mata: _et_strcat("`v'", "`enc'")
+                drop `v'
+                rename `enc' `v'
+                label values `v' `enc'
+                label variable `v' `"`vlab'"'
+                local e`ne'_kind "cat"
+                continue
+            }
+            local vfmt : format `v'
+            local vl ""
         }
         qui count if !missing(`v')
         if r(N) == 0 {
@@ -501,6 +574,7 @@ program define exporttables, rclass
     local ncat    = 0
     local nmul    = 0
     local ncon    = 0
+    local ntxt    = 0
     local wdone   = 0
 
     forvalues i = 1/`ne' {
@@ -514,7 +588,8 @@ program define exporttables, rclass
         if !inlist("`kind'", "cat", "multi", "cont") {
             if "`kind'" == "string" {
                 local ++nstr
-                local e`i'_res "No table: string variable"
+                local e`i'_res "`e`i'_why'"
+                if "`e`i'_res'" == "" local e`i'_res "No table: text variable"
             }
             else if "`kind'" == "date" {
                 local ++nskip
@@ -546,8 +621,9 @@ program define exporttables, rclass
             }
             local ktxt = cond("`kind'" == "ind", "indicator", ///
                          cond("`kind'" == "id", "identifier", ///
-                         cond("`kind'" == "meta", "metadata", "`kind'")))
-            di as text "  " _col(14) %-30s abbrev("`v'", 30) %-17s "`ktxt'" ///
+                         cond("`kind'" == "meta", "metadata", ///
+                         cond("`kind'" == "string", "text", "`kind'"))))
+            di as text "  " _col(14) %-30s abbrev("`v'", 30) %-19s "`ktxt'" ///
                 as text "skipped"
             continue
         }
@@ -575,7 +651,10 @@ program define exporttables, rclass
             as result %-30s abbrev("`shown'", 30) _continue
         local ktxt = cond("`kind'" == "cat", "single choice", ///
                      cond("`kind'" == "multi", "multiple choice", "continuous"))
-        di as text %-17s "`ktxt'" _continue
+        if "`e`i'_text'" == "1" {
+            local ktxt = cond("`kind'" == "cat", "single (text)", "continuous (text)")
+        }
+        di as text %-19s "`ktxt'" _continue
 
         capture noisily _et_one , kind(`kind') v(`v') g(`g') ggroups(`G') ///
             show(`show') row(`row') tno(`tno') pfmt(`pfmt') dec(`decimals') ///
@@ -587,6 +666,7 @@ program define exporttables, rclass
             local endrow = r(endrow)
             local ++nok
             if "`kind'" == "cat"   local ++ncat
+            if "`e`i'_text'" == "1" local ++ntxt
             if "`kind'" == "multi" local ++nmul
             if "`kind'" == "cont"  local ++ncon
             if "`kind'" == "multi" & `"`r(title)'"' != "" {
@@ -651,11 +731,21 @@ program define exporttables, rclass
     *------------------------------------------------------------------
     * 6. REPORT
     *------------------------------------------------------------------
+    * a full path, so the link opens the file wherever Stata's folder is
+    local usefull `"`using'"'
+    if !(substr(`"`using'"', 2, 1) == ":" | inlist(substr(`"`using'"', 1, 1), "/", "\", "~")) {
+        local usefull `"`c(pwd)'`c(dirsep)'`using'"'
+    }
+
     di as text "{hline 72}"
     di as text "  Tables exported      : " as result `nok' ///
         as text "  (single `ncat', multiple `nmul', continuous `ncon')"
-    di as text "  String variables     : " as result `nstr' ///
-        as text "  (no table exported)"
+    if `ntxt' > 0 {
+        di as text "  From text variables  : " as result `ntxt' ///
+            as text "  (categories, or numbers stored as text)"
+    }
+    di as text "  Text variables       : " as result `nstr' ///
+        as text "  (no table: more than `strmax' different answers, or every answer different)"
     if `nskip' > 0 {
         di as text "  Other skipped        : " as result `nskip' ///
             as text "  (identifier, date, metadata, GPS, phone, 0/1 indicator or all missing)"
@@ -664,7 +754,7 @@ program define exporttables, rclass
         di as error "  Failed               : `nfail'  (see the Index sheet)"
     }
     di as text "  Saved to             : " as result `"`using'"'
-    di as text `"  Open                 : {browse `"`using'"':click to open}"'
+    di as text `"  Open                 : {browse `"`usefull'"':click to open}"'
     di as text "{hline 72}"
 
     return scalar N_tables   = `nok'
@@ -672,6 +762,7 @@ program define exporttables, rclass
     return scalar N_multiple = `nmul'
     return scalar N_cont     = `ncon'
     return scalar N_string   = `nstr'
+    return scalar N_text     = `ntxt'
     return scalar N_skipped  = `nskip'
     return scalar N_failed   = `nfail'
     return scalar N          = `Nused'
@@ -1065,6 +1156,103 @@ real scalar _et_nunlab(string scalar vn, string scalar labv)
     return(n)
 }
 
+/* does a text value look like a date or a date-time?  (2026-09-01,
+   01/09/2026, Sep 1, 2026 8:00:00 AM, 01Sep2026 ...)                 */
+real scalar _et_datelike(string scalar x)
+{
+    string scalar m, y
+
+    m = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+    y = strlower(strtrim(x))
+    if (regexm(y, "^[0-9][0-9][0-9][0-9]-[0-9][0-9]?-[0-9][0-9]?")) return(1)
+    if (regexm(y, "^[0-9][0-9]?[/.-][0-9][0-9]?[/.-][0-9][0-9][0-9][0-9]")) return(1)
+    if (regexm(y, "^" + m + " [0-9][0-9]?,? [0-9][0-9][0-9][0-9]")) return(1)
+    if (regexm(y, "^[0-9][0-9]?[ -]?" + m + "[ -]?[0-9][0-9][0-9][0-9]")) return(1)
+    return(0)
+}
+
+/* for a text variable, set in the caller: nnm (non-empty values), nun
+   (different values) and ndate (1 if most values are dates)          */
+void _et_strinfo(string scalar vn)
+{
+    string colvector s, u
+    real scalar      i, nd
+
+    s = st_sdata(., vn)
+    s = select(s, s :!= "")
+    st_local("nnm", strofreal(rows(s)))
+    st_local("nun", "0")
+    st_local("nall", "0")
+    st_local("ndate", "0")
+    if (rows(s) == 0) return
+
+    u = uniqrows(s)
+    st_local("nun", strofreal(rows(u)))
+    st_local("nall", (hasmissing(strtoreal(u)) ? "0" : "1"))
+    nd = 0
+    for (i = 1; i <= rows(u); i++) nd = nd + _et_datelike(u[i])
+    if (nd >= 0.8 * rows(u)) st_local("ndate", "1")
+}
+
+/* sort key for natural order: case ignored and every run of digits
+   padded, so "Type 2" comes before "Type 10"                         */
+string scalar _et_natkey(string scalar s)
+{
+    string scalar out, run, c
+    real scalar   i
+
+    out = ""
+    run = ""
+    for (i = 1; i <= strlen(s); i++) {
+        c = substr(s, i, 1)
+        if (c >= "0" & c <= "9") {
+            run = run + c
+            continue
+        }
+        if (run != "") out = out + substr("000000000000", 1, max((0, 12 - strlen(run)))) + run
+        run = ""
+        out = out + c
+    }
+    if (run != "") out = out + substr("000000000000", 1, max((0, 12 - strlen(run)))) + run
+    return(strlower(out))
+}
+
+/* recode text variable vn into a new numeric variable nv, 1 2 3 ... in
+   natural order (numeric order when every answer is a number), with a
+   value label of the same name holding the text                      */
+void _et_strcat(string scalar vn, string scalar nv)
+{
+    string colvector s, u, key
+    real colvector   x, v
+    real scalar      i, k
+    transmorphic     A
+
+    s = st_sdata(., vn)
+    u = uniqrows(select(s, s :!= ""))
+    x = strtoreal(u)
+    if (rows(u) > 1 & !hasmissing(x)) u = u[order(x, 1)]
+    else if (rows(u) > 1) {
+        key = J(rows(u), 1, "")
+        for (k = 1; k <= rows(u); k++) key[k] = _et_natkey(u[k])
+        u = u[order((key, u), (1, 2))]
+    }
+
+    A = asarray_create()
+    for (k = 1; k <= rows(u); k++) asarray(A, u[k], k)
+    v = J(rows(s), 1, .)
+    for (i = 1; i <= rows(s); i++) {
+        if (s[i] != "") v[i] = asarray(A, s[i])
+    }
+    (void) st_addvar("long", nv)
+    st_store(., nv, v)
+
+    /* a value label holds at most 32,000 characters per value */
+    for (k = 1; k <= rows(u); k++) {
+        if (strlen(u[k]) > 32000) u[k] = usubstr(u[k], 1, 30000)
+    }
+    if (rows(u)) st_vlmodify(nv, (1::rows(u)), u)
+}
+
 /*----------------------------------------------------------------------
   Writing the workbook.
 
@@ -1303,7 +1491,7 @@ string scalar _et_kindtext(string scalar k)
     if (k == "cat")    return("Single choice")
     if (k == "multi")  return("Multiple choice")
     if (k == "cont")   return("Continuous")
-    if (k == "string") return("String")
+    if (k == "string") return("Text")
     if (k == "date")   return("Date / time")
     if (k == "id")     return("Identifier")
     if (k == "ind")    return("0/1 indicator")
@@ -1330,14 +1518,14 @@ void _et_index(real scalar ne)
         `"<sheetFormatPr defaultRowHeight="15"/>"' \
         (`"<cols><col min="1" max="1" width="45" customWidth="1"/><col min="2" max="2" width="26" customWidth="1"/>"' +
          `"<col min="3" max="3" width="60" customWidth="1"/><col min="4" max="4" width="16" customWidth="1"/>"' +
-         `"<col min="5" max="5" width="42" customWidth="1"/></cols>"') \
+         `"<col min="5" max="5" width="66" customWidth="1"/></cols>"') \
         "<sheetData>"
 
     X = X \ _et_row(1, _et_cs(1, 1, 13, "Table index"))
 
     info = ("Dataset" \ "Created" \ "Observations used" \ "Columns" \
             "Tables exported" \ "   single choice" \ "   multiple choice" \
-            "   continuous" \ "String variables (no table exported)" \
+            "   continuous" \ "Text variables without a table" \
             "Other variables skipped (reason in the list)" \
             "Tables that failed")
     nums = strtoreal((st_local("Nused") \ st_local("nok") \ st_local("ncat") \
@@ -1369,7 +1557,8 @@ void _et_index(real scalar ne)
         else cells = _et_ce(r, 1, 4)
         cells = cells + _et_cs(r, 2, 4, st_local(e + "var")) +
                         _et_cs(r, 3, 4, st_local(e + "lab")) +
-                        _et_cs(r, 4, 4, _et_kindtext(st_local(e + "kind"))) +
+                        _et_cs(r, 4, 4, _et_kindtext(st_local(e + "kind")) +
+                                        (st_local(e + "text") == "1" ? " (text)" : "")) +
                         _et_cs(r, 5, 4, st_local(e + "res"))
         X = X \ _et_row(r, cells)
     }

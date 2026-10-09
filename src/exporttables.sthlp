@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.1.0  10oct2026}{...}
+{* *! version 2.2.0  10oct2026}{...}
 {viewerjumpto "Syntax" "exporttables##syntax"}{...}
 {viewerjumpto "Description" "exporttables##description"}{...}
 {viewerjumpto "Options" "exporttables##options"}{...}
@@ -34,6 +34,7 @@ dataset to one formatted Excel workbook, one-way or crossed by district
 {synopt:{opt cat:egorical(varlist)}}treat these variables as single choice{p_end}
 {synopt:{opt cont:inuous(varlist)}}treat these variables as continuous{p_end}
 {synopt:{opt nomulti:select}}do not detect multiple-choice questions{p_end}
+{synopt:{opt str:max(#)}}text variables with at most {it:#} different answers get a table; default {cmd:50}{p_end}
 {synoptline}
 
 
@@ -55,7 +56,9 @@ The kind of table follows the kind of variable:
 {bf:Valid cases (N)} row, and a {bf:*} footnote explaining that the
 percentages can add up to more than 100{p_end}
 {p2col:{it:continuous}}N, Mean, Median, Mode, SD, Min and Max{p_end}
-{p2col:{it:string}}no table; the Index sheet and the Results window report how many string variables were left out{p_end}
+{p2col:{it:text}}a single-choice table when it has at most {opt strmax()}
+(50) different answers, such as categories typed into Excel; no table for
+free text with more answers than that{p_end}
 {p2colreset}{...}
 
 {pstd}
@@ -110,6 +113,11 @@ automatic choice described below.
 {opt nomultiselect} turns off multiple-choice detection; option dummies are
 then tabulated one by one as yes/no questions.
 
+{phang}
+{opt strmax(#)} sets how many different answers a text variable may have and
+still get a table; default 50.  {cmd:strmax(0)} gives no tables for text.  A
+text variable named in {opt categorical()} always gets a table.
+
 
 {marker rules}{...}
 {title:How variables are treated}
@@ -145,6 +153,20 @@ the indicators are listed on the Index sheet without a table.
 variables holding only 0 and 1 (shown as No / Yes).
 
 {pstd}
+{bf:Text.}  Data typed into Excel, or imported with {cmd:import excel},
+often keeps its categories as text ({cmd:"Male"}, {cmd:"Lack of money"}).
+A text variable with at most {opt strmax()} different answers (50 by
+default) gets a single-choice table, its answers in natural order
+({cmd:Type 2} before {cmd:Type 10}).  A text variable whose every answer is
+a number is treated as a number: with more than 10 different values (age,
+income) it is continuous, with 10 or fewer (a 1 to 5 rating) it is single
+choice.  No table is made for text with more than {opt strmax()} different
+answers (comments, names, addresses), for text in which every answer is
+different, for dates and times written as text, and for form metadata such
+as {cmd:KEY} or {cmd:SubmissionDate}.  On the Index sheet these tables are
+marked {bf:(text)}.
+
+{pstd}
 {bf:Continuous.}  Other numeric variables.  A value label that names only a
 few special codes ({cmd:-99 "Don't know"}) does not make a variable
 categorical: a labelled variable with more than 10 unlabelled values is
@@ -154,8 +176,8 @@ value (the smallest one when several tie); it is left blank when no value
 occurs more than once.
 
 {pstd}
-{bf:No table.}  String variables; dates and times (a {cmd:%t} or {cmd:%d}
-format); identifiers (a name ending in {cmd:id} such as {cmd:UID},
+{bf:No table.}  Free text (see {bf:Text} above); dates and times (a
+{cmd:%t} or {cmd:%d} format, or written as text); identifiers (a name ending in {cmd:id} such as {cmd:UID},
 {cmd:hhid} or {cmd:resp_id}, or named {cmd:key}, {cmd:uuid} or
 {cmd:serial}, with a different value in every row); form metadata
 ({cmd:formdef_version}, {cmd:deviceid}, {cmd:simid} ...); the parts of a GPS
@@ -181,6 +203,13 @@ missing.
 {pstd}Female respondents, whole percentages, every label category shown{p_end}
 {phang2}{cmd:. exporttables using "female.xlsx" if gender == 2, by(district) decimals(0) allcats replace}{p_end}
 
+{pstd}Data kept in Excel, where every column comes in as text{p_end}
+{phang2}{cmd:. import excel using "survey.xlsx", firstrow clear}{p_end}
+{phang2}{cmd:. exporttables using "tables.xlsx", by(district) replace}{p_end}
+
+{pstd}The same, allowing up to 100 different answers per text column{p_end}
+{phang2}{cmd:. exporttables using "tables.xlsx", by(district) strmax(100) replace}{p_end}
+
 
 {marker results}{...}
 {title:Stored results}
@@ -195,7 +224,8 @@ missing.
 {synopt:{cmd:r(N_single)}}single-choice tables{p_end}
 {synopt:{cmd:r(N_multiple)}}multiple-choice tables{p_end}
 {synopt:{cmd:r(N_cont)}}continuous tables{p_end}
-{synopt:{cmd:r(N_string)}}string variables left out{p_end}
+{synopt:{cmd:r(N_text)}}tables made from text variables{p_end}
+{synopt:{cmd:r(N_string)}}text variables left out (too many different answers){p_end}
 {synopt:{cmd:r(N_skipped)}}other variables left out{p_end}
 {synopt:{cmd:r(N_failed)}}tables that failed{p_end}
 

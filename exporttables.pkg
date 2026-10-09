@@ -3,7 +3,7 @@ d exporttables: export a table for every variable of a survey dataset to Excel
 d
 d Single choice -> N and %; multiple choice (select_multiple) -> N and % of
 d cases with valid cases (N); continuous -> N, mean, median, mode, SD, min,
-d max; string variables are counted but not tabulated.  With by(), every
+d max; text with at most 50 different answers -> N and %.  With by(), every
 d table is crossed by a category such as district, plus Total.  Writes a
 d formatted workbook with an Index sheet.  Pure Stata, no Python.
 d
