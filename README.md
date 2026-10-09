@@ -14,7 +14,7 @@ writes the right table for it:
 | Single choice (value-labelled, or 0/1) | N and % of valid answers, Total row |
 | Multiple choice (SurveyCTO / ODK / Kobo `select_multiple`) | N and % of cases per option, **Valid cases (N)** row, `*` footnote |
 | Continuous (other numeric) | N, Mean, Median, Mode, SD, Min, Max |
-| String, date, identifier, all missing | no table, listed on the Index sheet |
+| String, date, identifier, form metadata, GPS, phone number, all missing | no table, listed on the Index sheet with the reason |
 
 With `by()`, every table becomes a cross table: answer choices down the rows,
 one N / % column pair per district (or any other category), plus Total.
@@ -23,8 +23,9 @@ The workbook has two sheets:
 
 - **Index**: dataset, date, counts of tables by type, how many string variables
   were left out, and a row per variable with a link to its table.
-- **Tables**: all tables, one under another, with bold shaded headers, borders,
-  `#,##0` counts and `0.0` percentages.
+- **Tables**: all tables, one under another, with a navy header row, a pale blue
+  Total row, a light grid, `#,##0` counts and `0.0` percentages. Every column is
+  sized to fit its largest number, so nothing shows as `#####`.
 
 Pure Stata. No Python, nothing else to install.
 
@@ -120,16 +121,23 @@ question). Percentages are of valid cases and can add up to more than 100%.
   `parent_code` (`crops__99` for code -99), or `q_code_k` inside a repeat
   group. Every option is checked against the parent, the same check
   [`datareport`](https://github.com/RanaRedoan/datareport) uses. If the parent
-  was dropped, 0/1 variables sharing a stub (`src_1 src_2 src_3`) are grouped.
+  was dropped, 0/1 variables sharing a stub (`src_1 src_2 src_3`) are grouped,
+  unless they are the instances of one question in a repeat group (worded the
+  same apart from a number), which keep a table each.
 - **Numeric parent with dummies** (`tab fuel, gen(fuel_)`): a numeric variable
   holds one code, so `fuel` is single choice and `fuel_1 …` get no table.
 - **Single choice**: numeric with a value label, or holding only 0/1 (shown as
   No / Yes).
 - **Continuous**: any other numeric. A value label that names only special
   codes such as `-99 "Don't know"` does not make it categorical: those codes
-  are left out of the statistics and reported under the table.
-- **No table**: strings, dates (`%t` / `%d` formats), identifiers (`id`, `key`,
-  `uuid`, `*_id` … with a unique value per row), all-missing variables.
+  are left out of the statistics and reported under the table. Mode is left
+  blank when no value occurs more than once.
+- **No table**: strings; dates (`%t` / `%d` formats); identifiers (names ending
+  in `id` such as `UID`, `hhid`, `resp_id`, or `key`, `uuid`, `serial`, with a
+  unique value per row); form metadata (`formdef_version`, `deviceid` …); GPS
+  parts (`…latitude`, `…longitude`, `…altitude`, `…accuracy`); phone numbers
+  (`phone` / `mobile` / `contact` in the name, eight digits or more);
+  all-missing variables.
 
 Use `categorical()` / `continuous()` to override.
 

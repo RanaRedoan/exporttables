@@ -9,7 +9,7 @@ d formatted workbook with an Index sheet.  Pure Stata, no Python.
 d
 d Requires: Stata 16 or newer
 d
-d Distribution-Date: 20261008
+d Distribution-Date: 20261010
 d
 d Author: Md. Redoan Hossain Bhuiyan
 d Support: https://github.com/RanaRedoan/exporttables/issues

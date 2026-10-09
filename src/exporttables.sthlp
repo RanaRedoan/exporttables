@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.0.0  08oct2026}{...}
+{* *! version 2.1.0  10oct2026}{...}
 {viewerjumpto "Syntax" "exporttables##syntax"}{...}
 {viewerjumpto "Description" "exporttables##description"}{...}
 {viewerjumpto "Options" "exporttables##options"}{...}
@@ -72,9 +72,11 @@ fails is reported as {bf:FAILED} and the export carries on with the next
 one.
 
 {pstd}
-The workbook is written directly as Office Open XML and zipped with
-{help zipfile}.  No Python and no other software is needed, and large
-exports stay fast because every cell shares a small set of styles.
+Tables have a navy header row, a pale blue Total row and a light grid, and
+every column is made wide enough for its largest number.  The workbook is
+written directly as Office Open XML and zipped with {help zipfile}.  No
+Python and no other software is needed, and large exports stay fast because
+every cell shares a small set of styles.
 
 
 {marker options}{...}
@@ -121,8 +123,11 @@ repeat group the names are {it:q}{cmd:_}{it:code}{cmd:_}{it:k}.  Each option
 variable is checked against the parent before the question is accepted, the
 same check {cmd:datareport} uses.  If the parent was dropped, option
 variables sharing a stub ({cmd:src_1 src_2 src_3}) and holding only 0 and 1
-are grouped.  Valid cases are the respondents who answered: parent not
-missing, or, with no parent, not missing on at least one option.
+are grouped, unless they look like the instances of one question asked in a
+repeat group ({cmd:loan_1 loan_2 loan_3} worded the same apart from a number,
+or sharing a value label with codes other than 0 and 1); those keep a table
+each.  Valid cases are the respondents who answered: parent not missing, or,
+with no parent, not missing on at least one option.
 
 {pstd}
 Option labels come from the option variable's label.  When every option
@@ -145,13 +150,20 @@ few special codes ({cmd:-99 "Don't know"}) does not make a variable
 categorical: a labelled variable with more than 10 unlabelled values is
 continuous, the labelled codes are left out of the statistics, and a note
 under the table lists them with their counts.  Mode is the most frequent
-value (the smallest one when several tie).
+value (the smallest one when several tie); it is left blank when no value
+occurs more than once.
 
 {pstd}
 {bf:No table.}  String variables; dates and times (a {cmd:%t} or {cmd:%d}
-format); identifiers (a name such as {cmd:id}, {cmd:key}, {cmd:uuid},
-{cmd:serial} or ending in {cmd:_id}, with a different value in every row);
-0/1 indicators of a numeric parent; variables with every value missing.
+format); identifiers (a name ending in {cmd:id} such as {cmd:UID},
+{cmd:hhid} or {cmd:resp_id}, or named {cmd:key}, {cmd:uuid} or
+{cmd:serial}, with a different value in every row); form metadata
+({cmd:formdef_version}, {cmd:deviceid}, {cmd:simid} ...); the parts of a GPS
+reading (names ending in {cmd:latitude}, {cmd:longitude}, {cmd:altitude} or
+{cmd:accuracy}); phone numbers (a name containing {cmd:phone},
+{cmd:mobile}, {cmd:contact} or {cmd:cell}, with values of eight digits or
+more); 0/1 indicators of a numeric parent; variables with every value
+missing.
 
 
 {marker examples}{...}

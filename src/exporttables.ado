@@ -1,4 +1,4 @@
-*! version 2.0.0  08oct2026
+*! version 2.1.0  10oct2026
 *! exporttables: export a frequency / summary table for every variable
 *!               of a dataset to one formatted Excel sheet
 *! Author: Md. Redoan Hossain Bhuiyan
@@ -294,6 +294,10 @@ program define exporttables, rclass
         }
         forvalues p = 1/`np' {
             if `: word count `pm`p''' < 2 continue
+            * q_1 q_2 q_3 can also be the instances of one question asked
+            * in a repeat group (a yes/no per loan, say); those stay apart
+            _et_repeats `pm`p''
+            if `r(yes)' continue
             local ++nblk
             local blk`nblk'_dums   = trim(itrim("`pm`p''"))
             local blk`nblk'_codes  = trim(itrim("`pc`p''"))
@@ -401,11 +405,31 @@ program define exporttables, rclass
             local e`ne'_kind "date"
             continue
         }
-        * identifiers: an id-like name and a different value in every row
-        if regexm(lower("`v'"), "(^|_)(id|key|uuid|serial|sl|slno)$|^(id|key|uuid)_") {
+        * identifiers: an id-like name (UID, hhid, resp_id, key ...) and a
+        * different value in every row
+        if regexm(lower("`v'"), "id$|(^|_)(key|uuid|serial|sl|slno)$|^(id|key|uuid)_") {
             capture isid `v', missok
             if _rc == 0 {
                 local e`ne'_kind "id"
+                continue
+            }
+        }
+        * form metadata that SurveyCTO, ODK and Kobo add to every export
+        if inlist(lower("`v'"), "formdef_version", "deviceid", "subscriberid", ///
+                  "simid", "devicephonenum", "caseid", "instanceid", "key") {
+            local e`ne'_kind "meta"
+            continue
+        }
+        * the parts of a GPS reading (q_latitude, qLongitude ...)
+        if regexm(lower("`v'"), "(latitude|longitude|altitude|accuracy)$") {
+            local e`ne'_kind "gps"
+            continue
+        }
+        * phone numbers: a phone-like name and values of eight digits or more
+        if regexm(lower("`v'"), "phone|mobile|contact|cell") {
+            qui summarize `v', meanonly
+            if r(min) >= 1e7 {
+                local e`ne'_kind "phone"
                 continue
             }
         }
@@ -504,12 +528,25 @@ program define exporttables, rclass
                 local ++nskip
                 local e`i'_res "No table: 0/1 indicator of `e`i'_par' (see its table)"
             }
+            else if "`kind'" == "meta" {
+                local ++nskip
+                local e`i'_res "No table: form metadata"
+            }
+            else if "`kind'" == "gps" {
+                local ++nskip
+                local e`i'_res "No table: GPS reading"
+            }
+            else if "`kind'" == "phone" {
+                local ++nskip
+                local e`i'_res "No table: phone number"
+            }
             else {
                 local ++nskip
                 local e`i'_res "No table: all values missing"
             }
             local ktxt = cond("`kind'" == "ind", "indicator", ///
-                         cond("`kind'" == "id", "identifier", "`kind'"))
+                         cond("`kind'" == "id", "identifier", ///
+                         cond("`kind'" == "meta", "metadata", "`kind'")))
             di as text "  " _col(14) %-30s abbrev("`v'", 30) %-17s "`ktxt'" ///
                 as text "skipped"
             continue
@@ -621,7 +658,7 @@ program define exporttables, rclass
         as text "  (no table exported)"
     if `nskip' > 0 {
         di as text "  Other skipped        : " as result `nskip' ///
-            as text "  (identifier, date, 0/1 indicator or all missing)"
+            as text "  (identifier, date, metadata, GPS, phone, 0/1 indicator or all missing)"
     }
     if `nfail' > 0 {
         di as error "  Failed               : `nfail'  (see the Index sheet)"
@@ -802,6 +839,43 @@ program define _et_isdummy, rclass
     return scalar ok = 1
 end
 
+* do these 0/1 variables look like the instances of one question asked in a
+* repeat group, rather than the options of one multiple-choice question?
+* Instances share their wording ("Type of policy #4", "#5" ...) or carry a
+* value label naming more than 0 and 1; options are worded differently.
+program define _et_repeats, rclass
+    syntax varlist
+    return scalar yes = 0
+
+    local first : word 1 of `varlist'
+    local vl1 : value label `first'
+    local samevl = ("`vl1'" != "")
+    if `samevl' {
+        mata: st_local("labv", _et_vlvals("`vl1'"))
+        local binary = 1
+        foreach x of local labv {
+            if !inlist(`x', 0, 1) local binary = 0
+        }
+        if `binary' local samevl = 0
+    }
+
+    local samelb = 1
+    local l1 ""
+    local i = 0
+    foreach v of local varlist {
+        local ++i
+        local vl : value label `v'
+        if "`vl'" != "`vl1'" local samevl = 0
+        local lb : variable label `v'
+        local lb = ustrregexra(lower(`"`lb'"'), "\s*#\s*[0-9]+", "")
+        local lb = ustrregexra(`"`lb'"', "\s+[0-9]+\s*$", "")
+        local lb = strtrim(stritrim(`"`lb'"'))
+        if `i' == 1 local l1 `"`lb'"'
+        if `"`lb'"' == "" | `"`lb'"' != `"`l1'"' local samelb = 0
+    }
+    if `samevl' | `samelb' return scalar yes = 1
+end
+
 * option code carried by a dummy's name (q5__99 -> -99)
 program define _et_code, rclass
     args cd pattern v qn rk
@@ -931,7 +1005,9 @@ real colvector _et_stats(real colvector x)
             best  = s[i]
         }
     }
-    r[4] = best
+    /* with no value occurring twice there is no mode: leave it blank
+       rather than report the smallest value */
+    if (bestn > 1 | n == 1) r[4] = best
     if (n > 1) r[5] = sqrt(quadvariance(s))
     r[6] = s[1]
     r[7] = s[n]
@@ -1038,6 +1114,13 @@ string scalar _et_esc(string scalar s)
     return(s)
 }
 
+/* characters a number takes in #,##0 (d = 0) or #,##0.00 (d = 2) */
+real scalar _et_numw(real scalar x, real scalar d)
+{
+    if (missing(x)) return(0)
+    return(strlen(strtrim(strofreal(x, "%32." + strofreal(d) + "fc"))))
+}
+
 string scalar _et_ref(real scalar r, real scalar c)
 {
     return(numtobase26(c) + strofreal(r))
@@ -1093,16 +1176,12 @@ void _et_open(string scalar dir, string scalar sheet, real scalar maxcol,
     _et_set("_et_P", pfmt)
     _et_set("_et_M", J(0, 1, ""))
 
-    fh = fopen(dir + "/xl/worksheets/sheet2.xml", "w")
+    /* the rows are streamed to a scratch file; _et_close() wraps them in
+       the sheet once every table is in, because only then are the column
+       widths known (a fixed width shows a large number as #####)        */
+    _et_set("_et_W", J(1, max((maxcol, 1)), 0))
+    fh = fopen(dir + "/xl/worksheets/rows.tmp", "w")
     _et_set("_et_F", fh)
-    fput(fh, `"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"')
-    fput(fh, `"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"')
-    fput(fh, `"<sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews>"')
-    fput(fh, `"<sheetFormatPr defaultRowHeight="15"/>"')
-    fput(fh, `"<cols><col min="1" max="1" width="50" customWidth="1"/>"' +
-        (maxcol > 1 ? `"<col min="2" max=""' + strofreal(maxcol) +
-        `"" width="11" customWidth="1"/>"' : "") + "</cols>")
-    fput(fh, "<sheetData>")
 }
 
 void _et_write(string scalar kind, real scalar show, real scalar G,
@@ -1110,14 +1189,16 @@ void _et_write(string scalar kind, real scalar show, real scalar G,
                string scalar mT, string scalar pfmt)
 {
     real matrix      T
+    real rowvector   W
     string rowvector glab
     string colvector M
-    string scalar    vl, pct, cells, note
+    string scalar    vl, pct, cells, note, lab
     real scalar      fh, cont, K, lastcol, hrows, h1, h2, d1, j, l, rr,
                      tot, fr, sN, sP, sL
 
     fh = _et_get("_et_F")
     M  = _et_get("_et_M")
+    W  = _et_get("_et_W")
     T  = st_matrix(mT)
 
     cont    = (kind == "cont")
@@ -1145,7 +1226,10 @@ void _et_write(string scalar kind, real scalar show, real scalar G,
     pct = (kind == "multi" ? "% of cases" : "%")
     cells = _et_cs(h1, 1, 3, st_local("hdr"))
     if (cont) {
-        for (j = 1; j <= K; j++) cells = cells + _et_cs(h1, j + 1, 2, (show ? glab[j] : "Value"))
+        for (j = 1; j <= K; j++) {
+            cells = cells + _et_cs(h1, j + 1, 2, (show ? glab[j] : "Value"))
+            if (show) W[j + 1] = max((W[j + 1], ustrlen(glab[j]) + 1))
+        }
         fput(fh, _et_row(h1, cells))
     }
     else if (hrows == 1) {
@@ -1173,10 +1257,15 @@ void _et_write(string scalar kind, real scalar show, real scalar G,
         rr  = d1 + l - 1
         tot = (!cont & l == L)
         sL  = (tot ? 7 : 4)
-        cells = _et_cs(rr, 1, sL, st_local("rl" + strofreal(l)))
+        lab = st_local("rl" + strofreal(l))
+        cells = _et_cs(rr, 1, sL, lab)
+        W[1]  = max((W[1], ustrlen(lab)))
         if (cont) {
             sN = (l == 1 ? 5 : 10)
-            for (j = 1; j <= K; j++) cells = cells + _et_cn(rr, j + 1, sN, T[l, j])
+            for (j = 1; j <= K; j++) {
+                cells = cells + _et_cn(rr, j + 1, sN, T[l, j])
+                W[j + 1] = max((W[j + 1], _et_numw(T[l, j], (sN == 5 ? 0 : 2))))
+            }
         }
         else {
             sN = (tot ? 8 : 5)
@@ -1184,6 +1273,7 @@ void _et_write(string scalar kind, real scalar show, real scalar G,
             for (j = 1; j <= K; j++) {
                 cells = cells + _et_cn(rr, 2*j, sN, T[l, 2*j - 1]) +
                                 _et_cn(rr, 2*j + 1, sP, T[l, 2*j])
+                W[2*j] = max((W[2*j], _et_numw(T[l, 2*j - 1], 0)))
             }
         }
         fput(fh, _et_row(rr, cells))
@@ -1198,6 +1288,7 @@ void _et_write(string scalar kind, real scalar show, real scalar G,
     }
 
     _et_set("_et_M", M)
+    _et_set("_et_W", W)
     st_local("endrow",  strofreal(fr))
     st_local("lastcol", strofreal(lastcol))
 }
@@ -1216,6 +1307,9 @@ string scalar _et_kindtext(string scalar k)
     if (k == "date")   return("Date / time")
     if (k == "id")     return("Identifier")
     if (k == "ind")    return("0/1 indicator")
+    if (k == "meta")   return("Metadata")
+    if (k == "gps")    return("GPS")
+    if (k == "phone")  return("Phone number")
     return("Empty")
 }
 
@@ -1244,7 +1338,7 @@ void _et_index(real scalar ne)
     info = ("Dataset" \ "Created" \ "Observations used" \ "Columns" \
             "Tables exported" \ "   single choice" \ "   multiple choice" \
             "   continuous" \ "String variables (no table exported)" \
-            "Other variables skipped (identifier, date, 0/1 indicator, all missing)" \
+            "Other variables skipped (reason in the list)" \
             "Tables that failed")
     nums = strtoreal((st_local("Nused") \ st_local("nok") \ st_local("ncat") \
             st_local("nmul") \ st_local("ncon") \ st_local("nstr") \
@@ -1290,16 +1384,37 @@ void _et_index(real scalar ne)
 /* finish the tables sheet and write the remaining package parts */
 void _et_close()
 {
-    string colvector M
-    string scalar    dir, sh, pfmt, ns
-    real scalar      fh, i
+    string colvector M, R
+    string scalar    dir, sh, pfmt, ns, cw
+    real rowvector   W
+    real scalar      fh, i, w
 
     dir  = _et_get("_et_D")
     sh   = _et_get("_et_S")
     pfmt = _et_get("_et_P")
     M    = _et_get("_et_M")
-    fh   = _et_get("_et_F")
+    W    = _et_get("_et_W")
+    fclose(_et_get("_et_F"))
 
+    /* column widths from the widest entry: labels 30 to 60 characters,
+       numbers 11 to 24 */
+    cw = ""
+    for (i = 1; i <= cols(W); i++) {
+        w  = (i == 1 ? min((60, max((30, W[i] + 3)))) : min((24, max((11, W[i] + 3)))))
+        cw = cw + `"<col min=""' + strofreal(i) + `"" max=""' + strofreal(i) +
+             `"" width=""' + strofreal(w) + `"" customWidth="1"/>"'
+    }
+
+    R  = cat(dir + "/xl/worksheets/rows.tmp")
+    (void) _unlink(dir + "/xl/worksheets/rows.tmp")
+    fh = fopen(dir + "/xl/worksheets/sheet2.xml", "w")
+    fput(fh, `"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"')
+    fput(fh, `"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"')
+    fput(fh, `"<sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews>"')
+    fput(fh, `"<sheetFormatPr defaultRowHeight="15"/>"')
+    fput(fh, "<cols>" + cw + "</cols>")
+    fput(fh, "<sheetData>")
+    for (i = 1; i <= rows(R); i++) fput(fh, R[i])
     fput(fh, "</sheetData>")
     if (rows(M)) {
         fput(fh, `"<mergeCells count=""' + strofreal(rows(M)) + `"">"')
@@ -1348,29 +1463,32 @@ void _et_close()
         `"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"' \
         `"<styleSheet xmlns=""' + ns + `"spreadsheetml/2006/main">"' \
         (`"<numFmts count="1"><numFmt numFmtId="164" formatCode=""' + pfmt + `""/></numFmts>"') \
-        `"<fonts count="5">"' \
+        `"<fonts count="7">"' \
         `"<font><sz val="11"/><name val="Calibri"/><family val="2"/></font>"' \
         `"<font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font>"' \
-        `"<font><i/><sz val="10"/><name val="Calibri"/><family val="2"/></font>"' \
+        `"<font><i/><sz val="10"/><color rgb="FF595959"/><name val="Calibri"/><family val="2"/></font>"' \
         `"<font><u/><sz val="11"/><color rgb="FF0563C1"/><name val="Calibri"/><family val="2"/></font>"' \
-        `"<font><b/><sz val="14"/><name val="Calibri"/><family val="2"/></font>"' \
+        `"<font><b/><sz val="14"/><color rgb="FF1F3864"/><name val="Calibri"/><family val="2"/></font>"' \
+        `"<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>"' \
+        `"<font><b/><sz val="11"/><color rgb="FF1F3864"/><name val="Calibri"/><family val="2"/></font>"' \
         "</fonts>" \
-        `"<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>"' \
+        `"<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>"' \
+        `"<fill><patternFill patternType="solid"><fgColor rgb="FF1F3864"/><bgColor indexed="64"/></patternFill></fill>"' \
         `"<fill><patternFill patternType="solid"><fgColor rgb="FFDDEBF7"/><bgColor indexed="64"/></patternFill></fill></fills>"' \
         `"<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>"' \
-        `"<border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border></borders>"' \
+        `"<border><left style="thin"><color rgb="FFBFBFBF"/></left><right style="thin"><color rgb="FFBFBFBF"/></right><top style="thin"><color rgb="FFBFBFBF"/></top><bottom style="thin"><color rgb="FFBFBFBF"/></bottom><diagonal/></border></borders>"' \
         `"<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>"' \
         `"<cellXfs count="16">"' \
         `"<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>"' \
-        `"<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>"' \
-        `"<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>"' \
-        `"<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>"' \
+        `"<xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyFont="1"/>"' \
+        `"<xf numFmtId="0" fontId="5" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>"' \
+        `"<xf numFmtId="0" fontId="5" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>"' \
         `"<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>"' \
         `"<xf numFmtId="3" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>"' \
         `"<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>"' \
-        `"<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>"' \
-        `"<xf numFmtId="3" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>"' \
-        `"<xf numFmtId="164" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>"' \
+        `"<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>"' \
+        `"<xf numFmtId="3" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>"' \
+        `"<xf numFmtId="164" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>"' \
         `"<xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>"' \
         `"<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>"' \
         `"<xf numFmtId="0" fontId="3" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>"' \
